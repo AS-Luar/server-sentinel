@@ -1,0 +1,8 @@
+# Server-Sentinel Monitoring System Dependencies
+
+# Required for system metrics collection (CPU, RAM, disk, load average)
+psutil>=5.8.0
+
+# Note: pm2 and docker commands must be available in system PATH
+# - PM2 monitoring requires: npm install -g pm2
+# - Docker monitoring requires: docker installation
