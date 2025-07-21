@@ -7,54 +7,24 @@ Collects: All PM2 processes with batch tracking
 
 import json
 import subprocess
-import csv
-from datetime import datetime, timezone
+import sys
 from pathlib import Path
 
+# Add project root to Python path
+project_root = Path(__file__).parent.parent.parent
+sys.path.insert(0, str(project_root))
+
+# Now this import will work:
+from shared.monitoring_utils import get_current_timestamp, get_current_batch_number, handle_main_execution
+
 # Configuration
-script_dir = Path(__file__).parent
-LOG_DIR = script_dir.parent / "data"
-TIMESTAMP_FORMAT = "%Y-%m-%d %H:%M:%S"
 CSV_HEADERS = ["batch", "timestamp", "process_name", "pm_id", "instance", 
                "memory_mb", "cpu_percent", "status", "restart_count", "uptime_seconds"]
 
 #--------------------------------------------------------------
 
-def get_current_batch_number():
-    """
-    Get the next batch number for today's CSV file
-    Returns 1 for new files, or increments from last batch
-    """
-    try:
-        # Get today's CSV path
-        now = datetime.now(timezone.utc)
-        year_month = now.strftime("%Y/%m")
-        filename = now.strftime("%Y-%m-%d.csv")
-        csv_path = LOG_DIR / year_month / filename
-        
-        # If file doesn't exist, start with batch 1
-        if not csv_path.exists():
-            return 1
-        
-        # Read last line to get previous batch number
-        with open(csv_path, 'r') as csvfile:
-            lines = csvfile.readlines()
-            if len(lines) <= 1:  # Only headers or empty
-                return 1
-            
-            # Get last data line and extract batch number
-            last_line = lines[-1].strip()
-            if last_line:
-                batch_num = int(last_line.split(',')[0])
-                return batch_num + 1
-            else:
-                return 1
-                
-    except Exception as e:
-        print(f"ERROR getting batch number: {e}")
-        return 1
 
-def collect_pm2_processes():
+def collect_pm2_processes(csv_path=None):
     """
     Collect data from all PM2 processes
     Returns: list of dictionaries with process data
@@ -77,8 +47,8 @@ def collect_pm2_processes():
         
         # Extract metrics for each process
         processes = []
-        timestamp = datetime.now(timezone.utc).strftime(TIMESTAMP_FORMAT)
-        batch_num = get_current_batch_number()
+        timestamp = get_current_timestamp()
+        batch_num = get_current_batch_number(csv_path) if csv_path else 1
         
         for proc in pm2_data:
             process_info = {
@@ -109,82 +79,13 @@ def collect_pm2_processes():
     
 #----------------------------------------------------------------
 
-def write_pm2_data_to_csv(processes_data):
-    """
-    Write PM2 process data to daily CSV file
-    Handles multiple processes per collection cycle
-    """
-    if not processes_data:
-        print("No PM2 process data to write")
-        return False
-    
-    try:
-        # Create date-based file path
-        now = datetime.now(timezone.utc)
-        year_month = now.strftime("%Y/%m")
-        filename = now.strftime("%Y-%m-%d.csv")
-        csv_path = LOG_DIR / year_month / filename
-        
-        # Create directory structure if needed
-        csv_path.parent.mkdir(parents=True, exist_ok=True)
-        
-        # Check if file exists to determine if we need headers
-        file_exists = csv_path.exists() and csv_path.stat().st_size > 0
-        
-        # Write data to CSV
-        with open(csv_path, 'a', newline='') as csvfile:
-            writer = csv.DictWriter(csvfile, fieldnames=CSV_HEADERS)
-            
-            # Write headers if this is a new file
-            if not file_exists:
-                writer.writeheader()
-                print(f"Created new PM2 CSV file: {csv_path}")
-            
-            # Write all process data (multiple rows per collection)
-            for process in processes_data:
-                writer.writerow(process)
-            
-            print(f"Logged {len(processes_data)} PM2 processes to CSV")
-        
-        return True
-        
-    except Exception as e:
-        print(f"ERROR writing PM2 data to CSV: {e}")
-        return False
 
 def main():
     """
     Main execution function
-    Collects all PM2 process data and writes to CSV
+    Uses shared utilities for standardized execution flow
     """
-    print(f"Starting PM2 monitoring at {datetime.now(timezone.utc).strftime(TIMESTAMP_FORMAT)} UTC")
-    
-    # Collect PM2 process data
-    processes = collect_pm2_processes()
-    
-    if processes is not None:
-        if len(processes) > 0:
-            # Write to CSV
-            success = write_pm2_data_to_csv(processes)
-            
-            if success:
-                batch_num = processes[0]['batch']  # All processes have same batch
-                print(f"Successfully logged batch {batch_num} with {len(processes)} processes")
-                
-                # Show summary of processes
-                for proc in processes:
-                    print(f"  {proc['process_name']} (ID:{proc['pm_id']}): {proc['memory_mb']}MB, {proc['cpu_percent']}% CPU, {proc['status']}")
-            else:
-                print("Failed to write PM2 data to CSV")
-                return 1
-        else:
-            print("No PM2 processes running")
-            return 0
-    else:
-        print("Failed to collect PM2 data")
-        return 1
-    
-    return 0
+    return handle_main_execution("PM2", collect_pm2_processes, CSV_HEADERS, __file__, use_batches=True)
 
 # Script execution
 if __name__ == "__main__":

@@ -6,27 +6,29 @@ Collects: CPU, RAM, Disk, Load Average
 """
 
 import psutil
-import csv
-import os
-from datetime import datetime, timezone
+import sys
 from pathlib import Path
 
+# Add project root to Python path
+project_root = Path(__file__).parent.parent.parent
+sys.path.insert(0, str(project_root))
+
+# Now this import will work:
+from shared.monitoring_utils import get_current_timestamp, handle_main_execution
+
 # Configuration
-script_dir = Path(__file__).parent
-LOG_DIR = script_dir.parent / "data" #Always finds data folder, Local development path
-TIMESTAMP_FORMAT = "%Y-%m-%d %H:%M:%S"
 CSV_HEADERS = ["timestamp", "cpu_percent", "ram_used_mb", "ram_percent", "disk_percent", "load_1min"]
 
 #----------------------------------------------------------
 
-def collect_system_metrics():
+def collect_system_metrics(csv_path=None):
     """
     Collect current system metrics
     Returns: dictionary with metric names and values
     """
     try:
         # Get current timestamp
-        timestamp = datetime.now(timezone.utc).strftime(TIMESTAMP_FORMAT)
+        timestamp = get_current_timestamp()
         
         # CPU percentage (1 second sample for accuracy)
         cpu_percent = round(psutil.cpu_percent(interval=1), 1)
@@ -59,73 +61,15 @@ def collect_system_metrics():
 
 #--------------------------------------------------------------------
 
-def write_metrics_to_csv(metrics_data):
-    """
-    Write metrics to daily CSV file
-    Creates directory structure and handles CSV headers automatically
-    """
-    if metrics_data is None:
-        print("No metrics to write")
-        return False
-    
-    try:
-        # Create date-based file path: data/2025/07/2025-07-20.csv
-        now = datetime.now(timezone.utc)
-        year_month = now.strftime("%Y/%m")
-        filename = now.strftime("%Y-%m-%d.csv")
-        
-        csv_path = LOG_DIR / year_month / filename
-        
-        # Create directory structure if it doesn't exist
-        csv_path.parent.mkdir(parents=True, exist_ok=True)
-        
-        # Check if file exists to determine if we need headers
-        file_exists = csv_path.exists()
-        
-        # Write data to CSV
-        with open(csv_path, 'a', newline='') as csvfile:
-            writer = csv.DictWriter(csvfile, fieldnames=CSV_HEADERS)
-            
-            # Write headers if this is a new file
-            if not file_exists:
-                writer.writeheader()
-                print(f"Created new CSV file: {csv_path}")
-            
-            # Write the metrics data
-            writer.writerow(metrics_data)
-            
-        return True
-        
-    except Exception as e:
-        print(f"ERROR writing to CSV: {e}")
-        return False
 
 #-----------------------------------------------------------------------
 
 def main():
     """
     Main execution function
-    Collects metrics and writes to CSV
+    Uses shared utilities for standardized execution flow
     """
-    print(f"Starting metric collection at {datetime.now(timezone.utc).strftime(TIMESTAMP_FORMAT)} UTC")
-    
-    # Collect system metrics
-    metrics = collect_system_metrics()
-    
-    if metrics:
-        # Write to CSV
-        success = write_metrics_to_csv(metrics)
-        
-        if success:
-            print(f"Successfully logged metrics: CPU={metrics['cpu_percent']}%, RAM={metrics['ram_percent']}%, Disk={metrics['disk_percent']}%")
-        else:
-            print("Failed to write metrics to CSV")
-            return 1
-    else:
-        print("Failed to collect metrics")
-        return 1
-    
-    return 0
+    return handle_main_execution("server", collect_system_metrics, CSV_HEADERS, __file__)
 
 # Script execution
 if __name__ == "__main__":

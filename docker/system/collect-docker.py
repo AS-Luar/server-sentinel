@@ -7,54 +7,25 @@ Collects: All Docker containers with batch tracking
 
 import json
 import subprocess
-import csv
-from datetime import datetime, timezone
+import sys
 from pathlib import Path
 
+# Add project root to Python path
+project_root = Path(__file__).parent.parent.parent
+sys.path.insert(0, str(project_root))
+
+# Now this import will work:
+from shared.monitoring_utils import get_current_timestamp, get_current_batch_number, handle_main_execution
+from shared.formatters import parse_memory_to_mb, calculate_uptime
+
 # Configuration
-script_dir = Path(__file__).parent
-LOG_DIR = script_dir.parent / "data"
-TIMESTAMP_FORMAT = "%Y-%m-%d %H:%M:%S"
 CSV_HEADERS = ["batch", "timestamp", "container_name", "container_id", "image", 
                "memory_mb", "cpu_percent", "status", "uptime", "ports"]
 
 #----------------------------------------------------------------
 
-def get_current_batch_number():
-    """
-    Get the next batch number for today's CSV file
-    Returns 1 for new files, or increments from last batch
-    """
-    try:
-        # Get today's CSV path
-        now = datetime.now(timezone.utc)
-        year_month = now.strftime("%Y/%m")
-        filename = now.strftime("%Y-%m-%d.csv")
-        csv_path = LOG_DIR / year_month / filename
-        
-        # If file doesn't exist, start with batch 1
-        if not csv_path.exists():
-            return 1
-        
-        # Read last line to get previous batch number
-        with open(csv_path, 'r') as csvfile:
-            lines = csvfile.readlines()
-            if len(lines) <= 1:  # Only headers or empty
-                return 1
-            
-            # Get last data line and extract batch number
-            last_line = lines[-1].strip()
-            if last_line:
-                batch_num = int(last_line.split(',')[0])
-                return batch_num + 1
-            else:
-                return 1
-                
-    except Exception as e:
-        print(f"ERROR getting batch number: {e}")
-        return 1
 
-def collect_docker_containers():
+def collect_docker_containers(csv_path=None):
     """
     Collect data from all running Docker containers
     Returns: list of dictionaries with container data
@@ -70,8 +41,8 @@ def collect_docker_containers():
         
         # Parse JSON output (one JSON object per line)
         containers = []
-        timestamp = datetime.now(timezone.utc).strftime(TIMESTAMP_FORMAT)
-        batch_num = get_current_batch_number()
+        timestamp = get_current_timestamp()
+        batch_num = get_current_batch_number(csv_path) if csv_path else 1
         
         if not result.stdout.strip():
             print("No running Docker containers found")
@@ -119,40 +90,6 @@ def collect_docker_containers():
         print(f"ERROR collecting Docker data: {e}")
         return None
 
-def parse_memory_to_mb(memory_str):
-    """
-    Convert Docker memory string to MB
-    Handles: 123.4MiB, 1.2GiB, 456KiB, etc.
-    """
-    try:
-        # Remove whitespace and get numeric part
-        memory_str = memory_str.strip()
-        if memory_str.endswith('B'):
-            memory_str = memory_str[:-1]  # Remove 'B'
-        
-        # Extract number and unit
-        import re
-        match = re.match(r'([0-9.]+)([A-Za-z]*)', memory_str)
-        if not match:
-            return 0.0
-        
-        value = float(match.group(1))
-        unit = match.group(2).upper()
-        
-        # Convert to MB
-        if unit in ['', 'B']:
-            return round(value / (1024 * 1024), 1)
-        elif unit in ['K', 'KB', 'KIB']:
-            return round(value / 1024, 1)
-        elif unit in ['M', 'MB', 'MIB']:
-            return round(value, 1)
-        elif unit in ['G', 'GB', 'GIB']:
-            return round(value * 1024, 1)
-        else:
-            return 0.0
-            
-    except Exception:
-        return 0.0
 
 def get_container_details(container_id):
     """
@@ -197,109 +134,16 @@ def get_container_details(container_id):
     except Exception:
         return {'image': 'unknown', 'status': 'unknown', 'uptime': 'unknown', 'ports': 'none'}
 
-def calculate_uptime(started_at_str):
-    """
-    Calculate container uptime from start timestamp
-    """
-    try:
-        from datetime import datetime
-        # Parse Docker's timestamp format
-        started_at = datetime.fromisoformat(started_at_str.replace('Z', '+00:00'))
-        now = datetime.now(timezone.utc)
-        uptime_delta = now - started_at
-        
-        days = uptime_delta.days
-        hours, remainder = divmod(uptime_delta.seconds, 3600)
-        minutes, _ = divmod(remainder, 60)
-        
-        if days > 0:
-            return f"{days}d {hours}h {minutes}m"
-        elif hours > 0:
-            return f"{hours}h {minutes}m"
-        else:
-            return f"{minutes}m"
-            
-    except Exception:
-        return 'unknown'
 
 #----------------------------------------------------------------
 
-def write_docker_data_to_csv(containers_data):
-    """
-    Write Docker container data to daily CSV file
-    Handles multiple containers per collection cycle
-    """
-    if not containers_data:
-        print("No Docker container data to write")
-        return False
-    
-    try:
-        # Create date-based file path
-        now = datetime.now(timezone.utc)
-        year_month = now.strftime("%Y/%m")
-        filename = now.strftime("%Y-%m-%d.csv")
-        csv_path = LOG_DIR / year_month / filename
-        
-        # Create directory structure if needed
-        csv_path.parent.mkdir(parents=True, exist_ok=True)
-        
-        # Check if file exists to determine if we need headers
-        file_exists = csv_path.exists() and csv_path.stat().st_size > 0
-        
-        # Write data to CSV
-        with open(csv_path, 'a', newline='') as csvfile:
-            writer = csv.DictWriter(csvfile, fieldnames=CSV_HEADERS)
-            
-            # Write headers if this is a new file
-            if not file_exists:
-                writer.writeheader()
-                print(f"Created new Docker CSV file: {csv_path}")
-            
-            # Write all container data (multiple rows per collection)
-            for container in containers_data:
-                writer.writerow(container)
-            
-            print(f"Logged {len(containers_data)} Docker containers to CSV")
-        
-        return True
-        
-    except Exception as e:
-        print(f"ERROR writing Docker data to CSV: {e}")
-        return False
 
 def main():
     """
     Main execution function
-    Collects all Docker container data and writes to CSV
+    Uses shared utilities for standardized execution flow
     """
-    print(f"Starting Docker monitoring at {datetime.now(timezone.utc).strftime(TIMESTAMP_FORMAT)} UTC")
-    
-    # Collect Docker container data
-    containers = collect_docker_containers()
-    
-    if containers is not None:
-        if len(containers) > 0:
-            # Write to CSV
-            success = write_docker_data_to_csv(containers)
-            
-            if success:
-                batch_num = containers[0]['batch']  # All containers have same batch
-                print(f"Successfully logged batch {batch_num} with {len(containers)} containers")
-                
-                # Show summary of containers
-                for container in containers:
-                    print(f"  {container['container_name']}: {container['memory_mb']}MB, {container['cpu_percent']}% CPU, {container['status']}")
-            else:
-                print("Failed to write Docker data to CSV")
-                return 1
-        else:
-            print("No Docker containers running")
-            return 0
-    else:
-        print("Failed to collect Docker data")
-        return 1
-    
-    return 0
+    return handle_main_execution("Docker", collect_docker_containers, CSV_HEADERS, __file__, use_batches=True)
 
 # Script execution
 if __name__ == "__main__":
