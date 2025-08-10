@@ -14,12 +14,10 @@ def parse_memory_to_mb(memory_str):
     Returns float value in MB
     """
     try:
-        # Remove whitespace and trailing 'B' if present
+        # Remove whitespace
         memory_str = memory_str.strip()
-        if memory_str.endswith('B'):
-            memory_str = memory_str[:-1]
         
-        # Extract numeric value and unit using regex
+        # Extract numeric value and unit using regex (handles 'B' suffix properly)
         match = re.match(r'([0-9.]+)([A-Za-z]*)', memory_str)
         if not match:
             return 0.0
@@ -32,7 +30,7 @@ def parse_memory_to_mb(memory_str):
             return round(value / (1024 * 1024), 1)
         elif unit in ['K', 'KB', 'KIB']:
             return round(value / 1024, 1)
-        elif unit in ['M', 'MB', 'MIB']:
+        elif unit in ['M', 'MB', 'MIB']:  # This will now match "MIB" correctly
             return round(value, 1)
         elif unit in ['G', 'GB', 'GIB']:
             return round(value * 1024, 1)
@@ -41,6 +39,7 @@ def parse_memory_to_mb(memory_str):
             
     except Exception:
         return 0.0
+
 
 def calculate_uptime(started_at_str):
     """
